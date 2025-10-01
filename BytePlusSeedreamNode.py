@@ -158,7 +158,7 @@ class BytePlusSeedream4Simple:
             payload["image"] = image_urls
 
         try:
-            resp = requests.post(API_URL, headers=headers, json=payload, timeout=120)
+            resp = requests.post(API_URL, headers=headers, json=payload, timeout=300)
             data = resp.json()
             print("=== API RESPONSE ===")
             print(data)
@@ -180,7 +180,7 @@ class BytePlusSeedream4Simple:
                 pil = Image.open(io.BytesIO(base64.b64decode(img_b64))).convert("RGB")
             else:
                 img_url = item["url"]
-                r = requests.get(img_url, timeout=30)
+                r = requests.get(img_url, timeout=90)
                 pil = Image.open(io.BytesIO(r.content)).convert("RGB")
 
             tensors.append(pil_to_tensor(pil))
