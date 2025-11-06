@@ -33,10 +33,12 @@ SIZE_MAP = {
     # 4K
     "4K (auto)": "4K",
     "4K (4096x4096 1:1)": "4096x4096",
-    "4K (3840x2160 16:9)": "3840x2160",
-    "4K (2160x3840 9:16)": "2160x3840",
-    "4K (4096x3072 4:3)": "4096x3072",
-    "4K (3072x4096 3:4)": "3072x4096",
+    "4K (5504x3040 16:9)": "5504x3040",
+    "4K (3040x5504 9:16)": "3040x5504",
+    "4K (4704x3520 4:3)": "4704x3520",
+    "4K (3520x4704 3:4)": "3520x4704",
+    "4K (3648x4576 4:5)": "3648x4576",
+    "4K (4576x3648 5:4)": "4576x3648"
 
     # Custom
     "Custom": "Custom",
@@ -69,13 +71,13 @@ class BytePlusSeedream4Simple:
                     {"default": "seedream-4-0-250828"}
                 ),
 
-                "prompt": ("STRING", {"multiline": True, "default": "A futuristic city at sunset"}),
+                "prompt": ("STRING", {"multiline": True, "default": "input your prompt"}),
 
                 # Size presets (UI-friendly names)
-                "size": (list(SIZE_MAP.keys()), {"default": "2K (2048x2048 1:1)"}),
+                "size": (list(SIZE_MAP.keys()), {"default": "4K (auto)"}),
 
-                "custom_width": ("INT", {"default": 2048, "min": 512, "max": 4096, "step": 64}),
-                "custom_height": ("INT", {"default": 2048, "min": 512, "max": 4096, "step": 64}),
+                "custom_width": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
+                "custom_height": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
 
                 # Seed (API accepts -1 or number 0…2147483647)
                 "seed_value": ("INT", {"default": -1, "min": -1, "max": 2147483647}),
@@ -158,7 +160,7 @@ class BytePlusSeedream4Simple:
             payload["image"] = image_urls
 
         try:
-            resp = requests.post(API_URL, headers=headers, json=payload, timeout=300)
+            resp = requests.post(API_URL, headers=headers, json=payload, timeout=600)
             data = resp.json()
             print("=== API RESPONSE ===")
             print(data)
@@ -180,7 +182,7 @@ class BytePlusSeedream4Simple:
                 pil = Image.open(io.BytesIO(base64.b64decode(img_b64))).convert("RGB")
             else:
                 img_url = item["url"]
-                r = requests.get(img_url, timeout=90)
+                r = requests.get(img_url, timeout=180)
                 pil = Image.open(io.BytesIO(r.content)).convert("RGB")
 
             tensors.append(pil_to_tensor(pil))
