@@ -9,8 +9,14 @@ import base64
 import io
 import numpy as np
 from PIL import Image
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3 import PoolManager, Retry
 
-API_URL = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
+API_URLS = [
+    "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations",
+    "https://ark.us-east.bytepluses.com/api/v3/images/generations",  # fallback endpoint
+]
 
 # Size mapping: UI display name → API value
 SIZE_MAP = {
@@ -54,6 +60,13 @@ def pil_to_tensor(pil_image: Image.Image):
     return tensor
 
 
+class TLS12Adapter(HTTPAdapter):
+    """Forces TLS 1.2 and adds retry support"""
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs['ssl_version'] = ssl.PROTOCOL_TLSv1_2
+        return super().init_poolmanager(*args, **kwargs)
+
+
 class BytePlusSeedream4Simple:
     """
     ComfyUI Node: BytePlus Seedream 4.0
@@ -65,23 +78,15 @@ class BytePlusSeedream4Simple:
         return {
             "required": {
                 "api_key": ("STRING", {"default": "", "password": True}),
-
                 "model": (
                     ["seedream-4-0-250828", "ep-20250918135640-cxht8"],
                     {"default": "seedream-4-0-250828"}
                 ),
-
                 "prompt": ("STRING", {"multiline": True, "default": "input your prompt"}),
-
-                # Size presets (UI-friendly names)
                 "size": (list(SIZE_MAP.keys()), {"default": "4K (auto)"}),
-
                 "custom_width": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
                 "custom_height": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
-
-                # Seed (API accepts -1 or number 0…2147483647)
                 "seed_value": ("INT", {"default": -1, "min": -1, "max": 2147483647}),
-
                 "sequential_image_generation": (["disabled", "auto"], {"default": "disabled"}),
                 "max_images": ("INT", {"default": 1, "min": 1, "max": 15}),
                 "watermark": (["true", "false"], {"default": "true"}),
@@ -104,9 +109,9 @@ class BytePlusSeedream4Simple:
     OUTPUT_IS_LIST = (True, False)
 
     def generate(self, api_key, model, prompt, size, custom_width, custom_height,
-                 seed_value,
-                 sequential_image_generation, max_images, watermark, response_format,
-                 image1=None, image2=None, image3=None, image4=None, image5=None, image_url=""):
+                 seed_value, sequential_image_generation, max_images, watermark,
+                 response_format, image1=None, image2=None, image3=None,
+                 image4=None, image5=None, image_url=""):
 
         print(f"[ZenCreator/BytePlus] model={model}, prompt={prompt}, size={size}, seed={seed_value}")
 
@@ -137,7 +142,7 @@ class BytePlusSeedream4Simple:
         if image_url:
             image_urls.append(image_url)
 
-        # --- API request ---
+        # --- Payload ---
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -159,15 +164,42 @@ class BytePlusSeedream4Simple:
         if image_urls:
             payload["image"] = image_urls
 
-        try:
-            resp = requests.post(API_URL, headers=headers, json=payload, timeout=600)
-            data = resp.json()
-            print("=== API RESPONSE ===")
-            print(data)
-            resp.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            print(f"[ZenCreator/BytePlus] API Error: {e}")
-            raise Exception(f"BytePlus API request failed: {str(e)}")
+        # --- Create session with retries & TLS1.2 ---
+        retries = Retry(
+            total=5,
+            backoff_factor=2,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"]
+        )
+        session = requests.Session()
+        adapter = TLS12Adapter(max_retries=retries)
+        session.mount("https://", adapter)
+        session.headers.update({"Connection": "close"})
+
+        # --- Try main + fallback endpoints ---
+        data = None
+        last_error = None
+
+        for url in API_URLS:
+            try:
+                print(f"[ZenCreator/BytePlus] Sending request to {url} (timeout 600s)...")
+                resp = session.post(url, headers=headers, json=payload, timeout=(30, 600))
+                print(f"[ZenCreator/BytePlus] Response status: {resp.status_code}")
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except requests.exceptions.SSLError as e:
+                print(f"[ZenCreator/BytePlus] SSL/TLS error on {url}: {e}")
+                last_error = e
+            except requests.exceptions.RequestException as e:
+                print(f"[ZenCreator/BytePlus] Request error on {url}: {e}")
+                last_error = e
+
+        if data is None:
+            raise Exception(f"BytePlus API request failed after retries: {str(last_error)}")
+
+        print("=== API RESPONSE ===")
+        print(data)
 
         usage_info = str(data.get("usage", {}))
         if used_seed is not None:
@@ -182,7 +214,9 @@ class BytePlusSeedream4Simple:
                 pil = Image.open(io.BytesIO(base64.b64decode(img_b64))).convert("RGB")
             else:
                 img_url = item["url"]
-                r = requests.get(img_url, timeout=180)
+                print(f"[ZenCreator/BytePlus] Fetching image: {img_url}")
+                r = session.get(img_url, timeout=180)
+                r.raise_for_status()
                 pil = Image.open(io.BytesIO(r.content)).convert("RGB")
 
             tensors.append(pil_to_tensor(pil))
