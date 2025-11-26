@@ -84,14 +84,23 @@ class BytePlusSeedream4Simple:
                 ),
                 "prompt": ("STRING", {"multiline": True, "default": "input your prompt"}),
                 "size": (list(SIZE_MAP.keys()), {"default": "4K (auto)"}),
+
                 "custom_width": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
                 "custom_height": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
+
                 "seed_value": ("INT", {"default": -1, "min": -1, "max": 2147483647}),
                 "sequential_image_generation": (["disabled", "auto"], {"default": "disabled"}),
                 "max_images": ("INT", {"default": 1, "min": 1, "max": 15}),
                 "watermark": (["true", "false"], {"default": "true"}),
                 "response_format": (["url", "b64_json"], {"default": "url"}),
+
+                # NEW — Backward-compatible prompt optimization mode
+                "optimize_prompt_mode": (
+                    ["", "standard", "fast"],  # "" for old workflows
+                    {"default": ""}
+                ),
             },
+
             "optional": {
                 "image1": ("IMAGE",),
                 "image2": ("IMAGE",),
@@ -110,10 +119,16 @@ class BytePlusSeedream4Simple:
 
     def generate(self, api_key, model, prompt, size, custom_width, custom_height,
                  seed_value, sequential_image_generation, max_images, watermark,
-                 response_format, image1=None, image2=None, image3=None,
+                 response_format, optimize_prompt_mode,
+                 image1=None, image2=None, image3=None,
                  image4=None, image5=None, image_url=""):
 
         print(f"[ZenCreator/BytePlus] model={model}, prompt={prompt}, size={size}, seed={seed_value}")
+
+        # --- BACKWARD COMPATIBILITY FIX ---
+        # If old workflow passed "", fallback to "standard"
+        if optimize_prompt_mode not in ["standard", "fast"]:
+            optimize_prompt_mode = "standard"
 
         # --- Size mapping ---
         mapped = SIZE_MAP[size]
@@ -124,7 +139,7 @@ class BytePlusSeedream4Simple:
 
         # --- Seed handling ---
         used_seed = None
-        if model != "seedream-4-0-250828":  # seedream-4.0 doesn't support seed
+        if model != "seedream-4-0-250828":
             used_seed = seed_value
 
         # --- Collect input images ---
@@ -163,6 +178,12 @@ class BytePlusSeedream4Simple:
 
         if image_urls:
             payload["image"] = image_urls
+
+        # NEW — Prompt optimization for both models
+        if model in ["seedream-4-0-250828", "ep-20250918135640-cxht8"]:
+            payload["optimize_prompt_options"] = {
+                "mode": optimize_prompt_mode
+            }
 
         # --- Create session with retries & TLS1.2 ---
         retries = Retry(
