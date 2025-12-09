@@ -15,12 +15,10 @@ from urllib3 import PoolManager, Retry
 
 API_URLS = [
     "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations",
-    "https://ark.us-east.bytepluses.com/api/v3/images/generations",  # fallback endpoint
+    "https://ark.us-east.bytepluses.com/api/v3/images/generations",
 ]
 
-# Size mapping: UI display name → API value
 SIZE_MAP = {
-    # 1K
     "1K (auto)": "1K",
     "1K (1024x1024 1:1)": "1024x1024",
     "1K (1280x720 16:9)": "1280x720",
@@ -28,7 +26,6 @@ SIZE_MAP = {
     "1K (1152x864 4:3)": "1152x864",
     "1K (864x1152 3:4)": "864x1152",
 
-    # 2K
     "2K (auto)": "2K",
     "2K (2048x2048 1:1)": "2048x2048",
     "2K (2560x1440 16:9)": "2560x1440",
@@ -36,7 +33,6 @@ SIZE_MAP = {
     "2K (2304x1728 4:3)": "2304x1728",
     "2K (1728x2304 3:4)": "1728x2304",
 
-    # 4K
     "4K (auto)": "4K",
     "4K (4096x4096 1:1)": "4096x4096",
     "4K (5504x3040 16:9)": "5504x3040",
@@ -46,42 +42,42 @@ SIZE_MAP = {
     "4K (3648x4576 4:5)": "3648x4576",
     "4K (4576x3648 5:4)": "4576x3648",
 
-    # Custom
     "Custom": "Custom",
 }
 
 
 def pil_to_tensor(pil_image: Image.Image):
-    """Convert PIL.Image to ComfyUI torch.Tensor format"""
     arr = np.array(pil_image).astype(np.float32) / 255.0
-    if arr.ndim == 2:  # grayscale → RGB
+    if arr.ndim == 2:
         arr = np.stack([arr, arr, arr], axis=-1)
-    tensor = torch.from_numpy(arr)[None,]  # add batch dim
+    tensor = torch.from_numpy(arr)[None,]
     return tensor
 
 
 class TLS12Adapter(HTTPAdapter):
-    """Forces TLS 1.2 and adds retry support"""
     def init_poolmanager(self, *args, **kwargs):
         kwargs['ssl_version'] = ssl.PROTOCOL_TLSv1_2
         return super().init_poolmanager(*args, **kwargs)
 
 
 class BytePlusSeedream4Simple:
-    """
-    ComfyUI Node: BytePlus Seedream 4.0
-    Generates 1–15 images from BytePlus API.
-    """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "api_key": ("STRING", {"default": "", "password": True}),
+
                 "model": (
-                    ["seedream-4-0-250828", "ep-20250918135640-cxht8"],
+                    [
+                        "seedream-4-0-250828",
+                        "ep-20250918135640-cxht8",
+                        "ep-20251203181040-v7thr",
+                        "seedream-4-5-251128",
+                    ],
                     {"default": "seedream-4-0-250828"}
                 ),
+
                 "prompt": ("STRING", {"multiline": True, "default": "input your prompt"}),
                 "size": (list(SIZE_MAP.keys()), {"default": "4K (auto)"}),
 
@@ -94,9 +90,8 @@ class BytePlusSeedream4Simple:
                 "watermark": (["true", "false"], {"default": "true"}),
                 "response_format": (["url", "b64_json"], {"default": "url"}),
 
-                # NEW — Backward-compatible prompt optimization mode
                 "optimize_prompt_mode": (
-                    ["", "standard", "fast"],  # "" for old workflows
+                    ["", "standard", "fast"],
                     {"default": ""}
                 ),
             },
@@ -125,24 +120,21 @@ class BytePlusSeedream4Simple:
 
         print(f"[ZenCreator/BytePlus] model={model}, prompt={prompt}, size={size}, seed={seed_value}")
 
-        # --- BACKWARD COMPATIBILITY FIX ---
-        # If old workflow passed "", fallback to "standard"
         if optimize_prompt_mode not in ["standard", "fast"]:
             optimize_prompt_mode = "standard"
 
-        # --- Size mapping ---
         mapped = SIZE_MAP[size]
-        if mapped == "Custom":
-            size_value = f"{custom_width}x{custom_height}"
-        else:
-            size_value = mapped
+        size_value = f"{custom_width}x{custom_height}" if mapped == "Custom" else mapped
 
-        # --- Seed handling ---
+        # === FIX 1: Use only last 4 digits, but DO NOT send to API ===
         used_seed = None
         if model != "seedream-4-0-250828":
-            used_seed = seed_value
+            if seed_value == -1:
+                used_seed = -1
+            else:
+                used_seed = int(str(seed_value)[-4:])
 
-        # --- Collect input images ---
+        # Collect img2img inputs
         image_list = [img for img in [image1, image2, image3, image4, image5] if img is not None]
         image_urls = []
 
@@ -157,11 +149,7 @@ class BytePlusSeedream4Simple:
         if image_url:
             image_urls.append(image_url)
 
-        # --- Payload ---
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
+        # === No seed passed to API ===
         payload = {
             "model": model,
             "prompt": prompt,
@@ -173,47 +161,49 @@ class BytePlusSeedream4Simple:
             "stream": False,
         }
 
-        if used_seed is not None:
-            payload["seed"] = used_seed
-
         if image_urls:
             payload["image"] = image_urls
 
-        # NEW — Prompt optimization for both models
-        if model in ["seedream-4-0-250828", "ep-20250918135640-cxht8"]:
+        if model in [
+            "seedream-4-0-250828",
+            "ep-20250918135640-cxht8",
+            "ep-20251203181040-v7thr",
+            "seedream-4-5-251128",
+        ]:
             payload["optimize_prompt_options"] = {
                 "mode": optimize_prompt_mode
             }
 
-        # --- Create session with retries & TLS1.2 ---
         retries = Retry(
             total=5,
             backoff_factor=2,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"]
         )
+
         session = requests.Session()
         adapter = TLS12Adapter(max_retries=retries)
         session.mount("https://", adapter)
         session.headers.update({"Connection": "close"})
 
-        # --- Try main + fallback endpoints ---
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+
         data = None
         last_error = None
 
         for url in API_URLS:
             try:
-                print(f"[ZenCreator/BytePlus] Sending request to {url} (timeout 600s)...")
+                print(f"[ZenCreator/BytePlus] Sending request to {url}...")
                 resp = session.post(url, headers=headers, json=payload, timeout=(30, 600))
                 print(f"[ZenCreator/BytePlus] Response status: {resp.status_code}")
                 resp.raise_for_status()
                 data = resp.json()
                 break
-            except requests.exceptions.SSLError as e:
-                print(f"[ZenCreator/BytePlus] SSL/TLS error on {url}: {e}")
-                last_error = e
-            except requests.exceptions.RequestException as e:
-                print(f"[ZenCreator/BytePlus] Request error on {url}: {e}")
+            except Exception as e:
+                print(f"[ZenCreator/BytePlus] Error on {url}: {e}")
                 last_error = e
 
         if data is None:
@@ -222,12 +212,13 @@ class BytePlusSeedream4Simple:
         print("=== API RESPONSE ===")
         print(data)
 
+        # usage info
         usage_info = str(data.get("usage", {}))
         if used_seed is not None:
-            usage_info += f" | used_seed: {used_seed}"
+            usage_info += f" | seed_trimmed: {used_seed}"
         usage_info += f" | size: {size}"
 
-        # --- Convert all results ---
+        # images
         tensors = []
         for item in data.get("data", []):
             if response_format == "b64_json":
