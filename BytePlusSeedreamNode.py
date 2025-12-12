@@ -1,8 +1,3 @@
-"""
-BytePlus Seedream 4.0 Node for ComfyUI
-Generates 1–15 images from BytePlus API
-"""
-
 import torch
 import requests
 import base64
@@ -11,13 +6,21 @@ import numpy as np
 from PIL import Image
 import ssl
 from requests.adapters import HTTPAdapter
-from urllib3 import PoolManager, Retry
+from urllib3 import Retry
 
-API_URLS = [
-    "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations",
-    "https://ark.us-east.bytepluses.com/api/v3/images/generations",
-]
 
+# ============================
+#  Server endpoints
+# ============================
+SERVER_ENDPOINTS = {
+    "asia": "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations",
+    "us-east": "https://ark.us-east.bytepluses.com/api/v3/images/generations",
+}
+
+
+# ============================
+#  Size map
+# ============================
 SIZE_MAP = {
     "1K (auto)": "1K",
     "1K (1024x1024 1:1)": "1024x1024",
@@ -50,15 +53,26 @@ def pil_to_tensor(pil_image: Image.Image):
     arr = np.array(pil_image).astype(np.float32) / 255.0
     if arr.ndim == 2:
         arr = np.stack([arr, arr, arr], axis=-1)
-    tensor = torch.from_numpy(arr)[None,]
-    return tensor
+    return torch.from_numpy(arr)[None]
 
 
 class TLS12Adapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
-        kwargs['ssl_version'] = ssl.PROTOCOL_TLSv1_2
+        kwargs["ssl_version"] = ssl.PROTOCOL_TLSv1_2
         return super().init_poolmanager(*args, **kwargs)
 
+
+def quick_health_check(url: str) -> bool:
+    try:
+        r = requests.head(url, timeout=1)
+        return r.status_code < 500
+    except:
+        return False
+
+
+# ============================================================
+#  MAIN NODE (same name!)  —  backward compatible
+# ============================================================
 
 class BytePlusSeedream4Simple:
 
@@ -67,7 +81,6 @@ class BytePlusSeedream4Simple:
         return {
             "required": {
                 "api_key": ("STRING", {"default": "", "password": True}),
-
                 "model": (
                     [
                         "seedream-4-0-250828",
@@ -75,15 +88,12 @@ class BytePlusSeedream4Simple:
                         "ep-20251203181040-v7thr",
                         "seedream-4-5-251128",
                     ],
-                    {"default": "seedream-4-0-250828"}
+                    {"default": "seedream-4-0-250828"},
                 ),
-
                 "prompt": ("STRING", {"multiline": True, "default": "input your prompt"}),
                 "size": (list(SIZE_MAP.keys()), {"default": "4K (auto)"}),
-
                 "custom_width": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
                 "custom_height": ("INT", {"default": 2048, "min": 512, "max": 5504, "step": 64}),
-
                 "seed_value": ("INT", {"default": -1, "min": -1, "max": 2147483647}),
                 "sequential_image_generation": (["disabled", "auto"], {"default": "disabled"}),
                 "max_images": ("INT", {"default": 1, "min": 1, "max": 15}),
@@ -97,147 +107,188 @@ class BytePlusSeedream4Simple:
             },
 
             "optional": {
+                # ------ old optional ------
                 "image1": ("IMAGE",),
                 "image2": ("IMAGE",),
                 "image3": ("IMAGE",),
                 "image4": ("IMAGE",),
                 "image5": ("IMAGE",),
                 "image_url": ("STRING", {"default": ""}),
-            }
+
+                # ------ NEW OPTIONS AT THE END FOR COMPATIBILITY ------
+                "server": (
+                    ["auto", "asia", "us-east", "custom"],
+                    {"default": "auto"}            # safe fallback
+                ),
+                "custom_server_url": ("STRING", {"default": ""}),
+            },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING",)
-    RETURN_NAMES = ("images", "usage_info",)
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "usage_info")
     FUNCTION = "generate"
     CATEGORY = "ZenCreator/BytePlus"
     OUTPUT_IS_LIST = (True, False)
 
-    def generate(self, api_key, model, prompt, size, custom_width, custom_height,
-                 seed_value, sequential_image_generation, max_images, watermark,
-                 response_format, optimize_prompt_mode,
-                 image1=None, image2=None, image3=None,
-                 image4=None, image5=None, image_url=""):
+    # ================================================================
+    #                          MAIN FUNCTION
+    # ================================================================
+    def generate(
+        self, api_key, model, prompt, size, custom_width, custom_height,
+        seed_value, sequential_image_generation, max_images, watermark,
+        response_format, optimize_prompt_mode,
+        image1=None, image2=None, image3=None, image4=None, image5=None,
+        image_url="",
+        server="auto",                      # <—— NEW WITH DEFAULT
+        custom_server_url=""                # <—— NEW WITH DEFAULT
+    ):
 
-        print(f"[ZenCreator/BytePlus] model={model}, prompt={prompt}, size={size}, seed={seed_value}")
+        print(f"[BytePlus Node] server param: {server}, custom: {custom_server_url}")
 
-        if optimize_prompt_mode not in ["standard", "fast"]:
-            optimize_prompt_mode = "standard"
+        # =======================
+        # Resolve API URL list
+        # =======================
+
+        api_urls = []
+
+        if server == "auto":
+            # Try healthy servers first
+            for name, url in SERVER_ENDPOINTS.items():
+                if quick_health_check(url):
+                    api_urls.append(url)
+
+            # If all failed health check → still use both
+            if not api_urls:
+                api_urls = list(SERVER_ENDPOINTS.values())
+
+        elif server == "asia":
+            api_urls = [SERVER_ENDPOINTS["asia"]]
+
+        elif server == "us-east":
+            api_urls = [SERVER_ENDPOINTS["us-east"]]
+
+        elif server == "custom":
+            if not custom_server_url:
+                raise Exception("Custom server selected, but custom_server_url is empty.")
+            if not custom_server_url.startswith("http"):
+                custom_server_url = "https://" + custom_server_url
+            api_urls = [custom_server_url]
+
+        print(f"[BytePlus Node] Final API URL list: {api_urls}")
+
+        # =======================
+        # Size
+        # =======================
 
         mapped = SIZE_MAP[size]
         size_value = f"{custom_width}x{custom_height}" if mapped == "Custom" else mapped
 
-        # === FIX 1: Use only last 4 digits, but DO NOT send to API ===
-        used_seed = None
-        if model != "seedream-4-0-250828":
-            if seed_value == -1:
-                used_seed = -1
-            else:
-                used_seed = int(str(seed_value)[-4:])
+        # =======================
+        # Prepare Img2Img inputs
+        # =======================
 
-        # Collect img2img inputs
-        image_list = [img for img in [image1, image2, image3, image4, image5] if img is not None]
-        image_urls = []
-
-        if image_list:
-            for img in image_list:
+        image_inputs = []
+        for img in [image1, image2, image3, image4, image5]:
+            if img is not None:
                 pil = Image.fromarray((img[0].cpu().numpy() * 255).astype(np.uint8))
                 buf = io.BytesIO()
                 pil.save(buf, format="PNG")
-                b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
-                image_urls.append("data:image/png;base64," + b64_str)
+                image_inputs.append(
+                    "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+                )
 
         if image_url:
-            image_urls.append(image_url)
+            image_inputs.append(image_url)
 
-        # === No seed passed to API ===
+        # =======================
+        # Payload
+        # =======================
+
         payload = {
             "model": model,
             "prompt": prompt,
             "size": size_value,
             "response_format": response_format,
-            "sequential_image_generation": sequential_image_generation,
-            "sequential_image_generation_options": {"max_images": max_images},
             "watermark": (watermark == "true"),
             "stream": False,
+            "sequential_image_generation": sequential_image_generation,
+            "sequential_image_generation_options": {"max_images": max_images},
         }
 
-        if image_urls:
-            payload["image"] = image_urls
+        if image_inputs:
+            payload["image"] = image_inputs
 
-        if model in [
-            "seedream-4-0-250828",
-            "ep-20250918135640-cxht8",
-            "ep-20251203181040-v7thr",
-            "seedream-4-5-251128",
-        ]:
-            payload["optimize_prompt_options"] = {
-                "mode": optimize_prompt_mode
-            }
+        if optimize_prompt_mode in ["standard", "fast"]:
+            payload["optimize_prompt_options"] = {"mode": optimize_prompt_mode}
+
+        # =======================
+        # HTTP session
+        # =======================
 
         retries = Retry(
-            total=5,
-            backoff_factor=2,
+            total=5, backoff_factor=2,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"]
         )
 
         session = requests.Session()
-        adapter = TLS12Adapter(max_retries=retries)
-        session.mount("https://", adapter)
+        session.mount("https://", TLS12Adapter(max_retries=retries))
         session.headers.update({"Connection": "close"})
 
         headers = {
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
         }
+
+        # =======================
+        # Try sending request to each server
+        # =======================
 
         data = None
         last_error = None
 
-        for url in API_URLS:
+        for url in api_urls:
             try:
-                print(f"[ZenCreator/BytePlus] Sending request to {url}...")
+                print(f"[BytePlus Node] Trying server → {url}")
                 resp = session.post(url, headers=headers, json=payload, timeout=(30, 600))
-                print(f"[ZenCreator/BytePlus] Response status: {resp.status_code}")
+                print(f"[BytePlus Node] Server {url} returned {resp.status_code}")
                 resp.raise_for_status()
                 data = resp.json()
                 break
             except Exception as e:
-                print(f"[ZenCreator/BytePlus] Error on {url}: {e}")
+                print(f"[BytePlus Node] FAILED server {url}: {e}")
                 last_error = e
 
         if data is None:
-            raise Exception(f"BytePlus API request failed after retries: {str(last_error)}")
+            raise Exception(f"All servers failed. Last error: {last_error}")
 
-        print("=== API RESPONSE ===")
-        print(data)
+        # =======================
+        # Parse output
+        # =======================
 
-        # usage info
         usage_info = str(data.get("usage", {}))
-        if used_seed is not None:
-            usage_info += f" | seed_trimmed: {used_seed}"
-        usage_info += f" | size: {size}"
+        usage_info += f" | size: {size_value}"
 
-        # images
-        tensors = []
+        images = []
+
         for item in data.get("data", []):
             if response_format == "b64_json":
-                img_b64 = item["b64_json"]
-                pil = Image.open(io.BytesIO(base64.b64decode(img_b64))).convert("RGB")
+                img_data = base64.b64decode(item["b64_json"])
+                pil = Image.open(io.BytesIO(img_data)).convert("RGB")
             else:
                 img_url = item["url"]
-                print(f"[ZenCreator/BytePlus] Fetching image: {img_url}")
-                r = session.get(img_url, timeout=180)
+                r = session.get(img_url, timeout=120)
                 r.raise_for_status()
                 pil = Image.open(io.BytesIO(r.content)).convert("RGB")
 
-            tensors.append(pil_to_tensor(pil))
+            images.append(pil_to_tensor(pil))
 
-        if not tensors:
-            return ([], "No images returned")
+        return images, usage_info
 
-        return (tensors, usage_info)
 
+# ============================================================
+# NODE EXPORTS
+# ============================================================
 
 NODE_CLASS_MAPPINGS = {
     "BytePlusSeedream4Simple": BytePlusSeedream4Simple
