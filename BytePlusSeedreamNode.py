@@ -102,7 +102,7 @@ class BytePlusSeedream4Simple:
     OUTPUT_IS_LIST = (True, False)
 
     # =====================================================
-    #  MAIN GENERATION LOGIC
+    #  MAIN GENERATE LOGIC
     # =====================================================
 
     def generate(
@@ -116,7 +116,7 @@ class BytePlusSeedream4Simple:
         print(f"[BytePlus] Server mode = {server}")
 
         # --------------------------------------------------
-        # Resolve server URL
+        # Resolve server
         # --------------------------------------------------
         if server == "auto":
             api_urls = [SERVER_ENDPOINTS["asia"]]
@@ -124,7 +124,7 @@ class BytePlusSeedream4Simple:
             api_urls = [SERVER_ENDPOINTS["asia"]]
         elif server == "custom":
             if not custom_server_url:
-                raise Exception("Custom server selected but no URL provided.")
+                raise Exception("Custom server selected but URL not provided.")
             if not custom_server_url.startswith("http"):
                 custom_server_url = "https://" + custom_server_url
             api_urls = [custom_server_url]
@@ -140,7 +140,7 @@ class BytePlusSeedream4Simple:
         size_value = f"{custom_width}x{custom_height}" if mapped == "Custom" else mapped
 
         # --------------------------------------------------
-        # Img2Img input
+        # Prepare images
         # --------------------------------------------------
         image_inputs = []
         for img in [image1, image2, image3, image4, image5]:
@@ -186,7 +186,7 @@ class BytePlusSeedream4Simple:
         }
 
         # --------------------------------------------------
-        # Send request — LONG TIMEOUT (8 minutes)
+        # Send request — 120/480 timeout
         # --------------------------------------------------
         data = None
         last_error = None
@@ -194,16 +194,19 @@ class BytePlusSeedream4Simple:
         for url in api_urls:
             try:
                 print(f"[BytePlus] POST → {url}")
+
                 resp = session.post(
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=(10, 480)  # 10 sec connect, 480 sec (8 min) read timeout
+                    timeout=(120, 480)  # <<< HERE: 120 write/connect, 480 read timeout
                 )
+
                 print(f"[BytePlus] Status = {resp.status_code}")
                 resp.raise_for_status()
                 data = resp.json()
                 break
+
             except Exception as e:
                 print(f"[BytePlus] ERROR contacting {url}: {e}")
                 last_error = e
