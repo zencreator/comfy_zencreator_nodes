@@ -199,7 +199,7 @@ class BytePlusSeedream4Simple:
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=(120, 480)  # <<< HERE: 120 write/connect, 480 read timeout
+                    timeout=(240, 480)  # <<< HERE: 120 write/connect, 480 read timeout
                 )
 
                 print(f"[BytePlus] Status = {resp.status_code}")
