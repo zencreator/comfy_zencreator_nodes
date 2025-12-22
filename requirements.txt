@@ -4,3 +4,4 @@ pillow
 numpy
 fal_client
 google-generativeai
+fal_client
