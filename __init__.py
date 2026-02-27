@@ -1,6 +1,6 @@
 """
 ZenCreator Custom Nodes for ComfyUI
-BytePlus Seedream 4.0 & 5.0 Lite & Fal.ai & Gemini 3 Pro & Grok
+BytePlus Seedream 4.0 & 5.0 Lite & Fal.ai & Gemini 3 Pro & Gemini 3.1 Flash & Grok
 """
 
 NODE_CLASS_MAPPINGS = {}
@@ -20,7 +20,7 @@ except Exception as e:
     print("[ZenCreator] Failed to load BytePlusSeedreamNode (4.x):", e)
 
 # ----------------------------
-# BytePlus Seedream 5.0 Lite   ← НОВОЕ
+# BytePlus Seedream 5.0 Lite
 # ----------------------------
 try:
     from .BytePlusSeedream5Lite import (
@@ -46,7 +46,7 @@ except Exception as e:
     print("[ZenCreator] Failed to load NanoBanabaFALAI:", e)
 
 # ----------------------------
-# Gemini
+# Gemini 3 Pro (Nano Banana Pro)
 # ----------------------------
 try:
     from .NanoBananaGemini import (
@@ -56,10 +56,23 @@ try:
     NODE_CLASS_MAPPINGS.update(Gemini_Classes)
     NODE_DISPLAY_NAME_MAPPINGS.update(Gemini_Names)
 except Exception as e:
-    print("[ZenCreator] Failed to load NanoBananaGemini:", e)
+    print("[ZenCreator] Failed to load NanoBananaGemini (3 Pro):", e)
 
 # ----------------------------
-# Grok Unified (старый остаётся)
+# Gemini 3.1 Flash Image Preview (Nano Banana 2) ← НОВОЕ
+# ----------------------------
+try:
+    from .NanoBananaGemini31Flash import (
+        NODE_CLASS_MAPPINGS as Gemini31Flash_Classes,
+        NODE_DISPLAY_NAME_MAPPINGS as Gemini31Flash_Names,
+    )
+    NODE_CLASS_MAPPINGS.update(Gemini31Flash_Classes)
+    NODE_DISPLAY_NAME_MAPPINGS.update(Gemini31Flash_Names)
+except Exception as e:
+    print("[ZenCreator] Failed to load NanoBananaGemini31Flash (3.1 Flash):", e)
+
+# ----------------------------
+# Grok Unified
 # ----------------------------
 try:
     from .grok_unified_node import (
@@ -146,4 +159,4 @@ __all__ = [
 
 # Metadata
 WEB_DIRECTORY = "./web"
-__version__ = "1.6.0"   # ← можно поднять версию, раз добавили новую модель
+__version__ = "1.7.0"   # Обновлено из-за добавления Gemini 3.1 Flash Image Preview
