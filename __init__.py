@@ -150,6 +150,19 @@ except Exception as e:
     print("[ZenCreator] Failed to load grok_video_edit_node:", e)
 
 # ----------------------------
+# Qwen Image 2.0 Pro
+# ----------------------------
+try:
+    from .qwen_image_node import (
+        NODE_CLASS_MAPPINGS as QwenImageClasses,
+        NODE_DISPLAY_NAME_MAPPINGS as QwenImageNames,
+    )
+    NODE_CLASS_MAPPINGS.update(QwenImageClasses)
+    NODE_DISPLAY_NAME_MAPPINGS.update(QwenImageNames)
+except Exception as e:
+    print("[ZenCreator] Failed to load qwen_image_node:", e)
+    
+# ----------------------------
 # Export
 # ----------------------------
 __all__ = [
